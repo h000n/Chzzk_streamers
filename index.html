@@ -4,101 +4,517 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>데이터 대시보드</title>
+  <script>
+    // 첫 화면 깜빡임 방지: 저장된 테마(없으면 시스템 설정)를 먼저 적용
+    (function () {
+      try {
+        var t = localStorage.getItem("theme");
+        var dark = t ? t === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (dark) document.documentElement.classList.add("dark");
+      } catch (e) {}
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: "class" };</script>
   <link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.min.css">
   <style>
+    .btn { display:inline-flex; align-items:center; gap:.375rem; border:1px solid #cbd5e1; background:#fff; color:#334155;
+           border-radius:.625rem; padding:.4rem .75rem; font-size:.8125rem; cursor:pointer; }
+    .btn:hover { background:#f1f5f9; }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:1rem; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    .field { border:1px solid #cbd5e1; border-radius:.5rem; padding:.35rem .6rem; font-size:.8125rem; background:#fff; color:inherit; }
+    .fav-btn { background:none; border:0; cursor:pointer; font-size:1.05rem; line-height:1; color:#cbd5e1; }
+    .fav-btn.on { color:#f59e0b; }
+    #table tbody tr { cursor:pointer; }
+    table.dataTable thead th { white-space:nowrap; }
     @media (max-width: 640px) {
-      .dt-container .dt-layout-row { flex-direction: column; align-items: stretch; gap: .5rem; }
+      .dt-container .dt-layout-row { flex-direction:column; align-items:stretch; gap:.5rem; }
     }
-    table.dataTable thead th { white-space: nowrap; }
+
+    /* 다크 모드 */
+    html.dark .btn { background:#1e293b; border-color:#334155; color:#e2e8f0; }
+    html.dark .btn:hover { background:#273449; }
+    html.dark .card { background:#1e293b; border-color:#334155; box-shadow:none; }
+    html.dark .field, html.dark .dt-container .dt-input { background:#0f172a; border-color:#334155; color:#e2e8f0; }
+    html.dark .dt-container, html.dark table.dataTable, html.dark table.dataTable th, html.dark table.dataTable td { color:#e2e8f0; }
+    html.dark table.dataTable > thead > tr > th, html.dark table.dataTable > thead > tr > td { border-bottom-color:#475569; }
+    html.dark table.dataTable > tbody > tr > * { background-color:transparent; box-shadow:none !important; border-color:#334155; }
+    html.dark table.dataTable > tbody > tr:hover > * { background-color:rgba(148,163,184,.12); }
+    html.dark .dt-container .dt-paging .dt-paging-button { color:#e2e8f0 !important; }
+    html.dark .dt-container .dt-paging .dt-paging-button.current { background:#334155 !important; border-color:#475569 !important; }
+    html.dark .dt-container .dt-paging .dt-paging-button.disabled { color:#64748b !important; }
+    html.dark .dt-container .dt-info { color:#94a3b8; }
+    html.dark .fav-btn { color:#475569; }
+    html.dark .fav-btn.on { color:#fbbf24; }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-800">
+<body class="bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-100">
   <main class="max-w-6xl mx-auto px-4 py-6 sm:py-10">
-    <header class="mb-6">
-      <h1 class="text-2xl sm:text-3xl font-bold">데이터 대시보드</h1>
-      <p id="updated" class="text-sm text-slate-500 mt-1">불러오는 중...</p>
+    <header class="mb-6 flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-bold">데이터 대시보드</h1>
+        <p id="updated" class="text-sm text-slate-500 dark:text-slate-400 mt-1">불러오는 중...</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="btnTheme" class="btn" type="button">🌙 다크</button>
+      </div>
     </header>
 
-    <section id="stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6"></section>
+    <section id="stats" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6"></section>
 
-    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 sm:p-5">
-      <div id="filters" class="mb-3"></div>
+    <section id="charts" class="grid md:grid-cols-2 gap-4 mb-6" style="display:none">
+      <div id="barCard" class="card p-4" style="display:none">
+        <h2 id="barTitle" class="text-sm font-semibold mb-2"></h2>
+        <div class="relative h-64"><canvas id="barChart"></canvas></div>
+      </div>
+      <div id="pieCard" class="card p-4" style="display:none">
+        <h2 id="pieTitle" class="text-sm font-semibold mb-2"></h2>
+        <div class="relative h-64"><canvas id="pieChart"></canvas></div>
+      </div>
+    </section>
+
+    <section class="card p-3 sm:p-5">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <div id="filters" class="flex flex-wrap items-center gap-2"></div>
+        <div class="flex items-center gap-2 ml-auto">
+          <div class="relative">
+            <button id="btnCols" class="btn" type="button">열 선택</button>
+            <div id="colPanel" class="card absolute right-0 mt-1 z-20 p-3 w-56 max-h-72 overflow-auto" style="display:none"></div>
+          </div>
+          <button id="btnCsv" class="btn" type="button">CSV 내보내기</button>
+        </div>
+      </div>
       <div id="error" class="hidden rounded-xl bg-red-50 text-red-700 border border-red-200 p-4 text-sm"></div>
       <table id="table" class="display nowrap" style="width:100%"></table>
+      <p class="mt-3 text-xs text-slate-400">행을 누르면 상세 정보가 열립니다 · ☆를 눌러 즐겨찾기(이 기기에만 저장) · <kbd>/</kbd> 검색창 이동</p>
     </section>
 
     <footer class="mt-6 text-center text-xs text-slate-400">매일 자동으로 갱신됩니다.</footer>
   </main>
 
+  <!-- 상세 보기 -->
+  <div id="modal" class="fixed inset-0 z-50 items-end sm:items-center justify-center bg-black/50 sm:p-4" style="display:none">
+    <div class="card w-full sm:max-w-lg max-h-[85vh] overflow-auto p-5 rounded-b-none sm:rounded-b-2xl">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <h2 id="modalTitle" class="text-lg font-bold break-all"></h2>
+        <button id="modalClose" class="btn" type="button">닫기</button>
+      </div>
+      <dl id="modalBody" class="text-sm divide-y divide-slate-200 dark:divide-slate-700"></dl>
+      <div class="mt-4"><button id="modalFav" class="btn" type="button"></button></div>
+    </div>
+  </div>
+
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <script src="https://cdn.datatables.net/2.1.8/js/dataTables.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script>
+    // ------------------------------------------------------------ 유틸
     const fmt = new Intl.NumberFormat("ko-KR");
     const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const isEmpty = (v) => v === null || v === undefined || v === "";
+    const isUrl = (v) => typeof v === "string" && /^https?:\/\//.test(v);
+    const $id = (id) => document.getElementById(id);
+    const store = {
+      get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+      set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+    };
+    const PALETTE = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#14b8a6", "#ec4899", "#64748b",
+                     "#84cc16", "#f97316", "#06b6d4", "#a855f7", "#78716c"];
 
-    function statCard(label, value) {
-      return `<div class="rounded-2xl bg-white border border-slate-200 shadow-sm p-4">
-        <div class="text-xs text-slate-500">${esc(label)}</div>
-        <div class="mt-1 text-2xl font-bold">${esc(value)}</div></div>`;
+    const state = {
+      columns: [], rows: [], kinds: [], keyIdx: 0, primaryNum: -1, primaryCat: -1, numCols: [], cats: [],
+      table: null, favs: new Set(store.get("favs:v1", [])), hiddenCols: store.get("cols:v1", {}),
+      filter: { cats: {}, numCol: -1, min: null, max: null, favOnly: false },
+      charts: { bar: null, pie: null }, modalKey: null, extRegistered: false, timer: null,
+    };
+
+    function rowKey(row) {
+      const v = row[state.keyIdx];
+      return isEmpty(v) ? "n:" + String(row[0] ?? "") : String(v);
     }
 
-    // 열 종류 판별: 전부 숫자면 number, 전부 http 링크면 url, 그 외 text
+    // ------------------------------------------------------------ 테마
+    function setThemeLabel() {
+      const dark = document.documentElement.classList.contains("dark");
+      $id("btnTheme").textContent = dark ? "☀️ 라이트" : "🌙 다크";
+    }
+    function toggleTheme() {
+      const dark = !document.documentElement.classList.contains("dark");
+      document.documentElement.classList.toggle("dark", dark);
+      try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch (e) {}
+      setThemeLabel();
+      if (state.table) updateCharts();
+    }
+
+    // ------------------------------------------------------------ 데이터 분석
+    // 열 종류: 숫자만 있으면 number, 80% 이상이 http 링크면 url, 그 외 text
     function columnKind(rows, i) {
-      let allNumber = true, allUrl = true, seen = false;
+      let total = 0, nums = 0, urls = 0;
       for (const r of rows) {
         const v = r[i];
         if (isEmpty(v)) continue;
-        seen = true;
-        if (typeof v !== "number") allNumber = false;
-        if (typeof v !== "string" || !/^https?:\/\//.test(v)) allUrl = false;
-        if (!allNumber && !allUrl) break;
+        total++;
+        if (typeof v === "number") nums++;
+        if (isUrl(v)) urls++;
       }
-      if (!seen) return "text";
-      return allNumber ? "number" : allUrl ? "url" : "text";
+      if (!total) return "text";
+      if (nums === total) return "number";
+      if (urls / total >= 0.8) return "url";
+      return "text";
     }
 
-    function buildColumns(columns, rows) {
-      return columns.map((title, i) => {
-        const kind = columnKind(rows, i);
-        const col = { title, data: i, defaultContent: "" };
+    function analyze(columns, rows) {
+      const kinds = columns.map((_, i) => columnKind(rows, i));
+      const keyIdx = Math.max(0, kinds.indexOf("url"));
+      let primaryNum = columns.indexOf("팔로워 수");
+      if (primaryNum < 0 || kinds[primaryNum] !== "number") primaryNum = kinds.indexOf("number");
+      const numCols = kinds.map((k, i) => (k === "number" ? i : -1)).filter((i) => i >= 0);
+
+      // 값 종류가 12개 이하인 텍스트 열(예: 등급)은 드롭다운 필터/도넛 차트 대상
+      const cats = [];
+      columns.forEach((title, i) => {
+        if (i === 0 || kinds[i] !== "text") return;
+        const counts = new Map();
+        let blank = 0;
+        for (const r of rows) {
+          const v = r[i];
+          if (isEmpty(v)) { blank++; continue; }
+          counts.set(String(v), (counts.get(String(v)) || 0) + 1);
+          if (counts.size > 12) break;
+        }
+        if (counts.size < 1 || counts.size > 12) return;
+        const values = [...counts.entries()].sort((a, b) => b[1] - a[1])
+          .map(([value, count]) => ({ value, label: value, count }));
+        if (blank) values.push({ value: "__blank__", label: "(빈값)", count: blank });
+        cats.push({ idx: i, title, values });
+      });
+      let primaryCat = cats.find((c) => c.title === "등급");
+      primaryCat = primaryCat ? primaryCat.idx : (cats.length ? cats[0].idx : -1);
+
+      Object.assign(state, { columns, rows, kinds, keyIdx, primaryNum, numCols, cats, primaryCat });
+    }
+
+    // ------------------------------------------------------------ 표 구성
+    function buildColumns() {
+      const cols = [{
+        title: "★", data: null, orderable: false, searchable: false, className: "dt-center", width: "28px",
+        render: (d, t, row) => {
+          if (t !== "display") return "";
+          const k = rowKey(row), on = state.favs.has(k);
+          return `<button class="fav-btn${on ? " on" : ""}" data-key="${esc(k)}" type="button" aria-label="즐겨찾기">${on ? "★" : "☆"}</button>`;
+        },
+      }];
+      state.columns.forEach((title, i) => {
+        const kind = state.kinds[i];
+        const col = { title, data: i, defaultContent: "", visible: state.hiddenCols[title] !== false };
         if (kind === "number") {
           col.className = "dt-right";
           col.render = (d, t) => (t === "display" && !isEmpty(d) ? fmt.format(d) : d);
-        } else if (kind === "url") {
-          col.render = (d, t) => (t === "display" && !isEmpty(d)
-            ? `<a href="${esc(d)}" target="_blank" rel="noopener" class="text-emerald-600 hover:underline">바로가기</a>`
-            : d);
         } else {
-          col.render = (d, t) => (t === "display" && !isEmpty(d) ? esc(d) : d);
+          col.render = (d, t) => {
+            if (t !== "display" || isEmpty(d)) return d;
+            return isUrl(d)
+              ? `<a href="${esc(d)}" target="_blank" rel="noopener" class="text-emerald-600 dark:text-emerald-400 hover:underline">바로가기</a>`
+              : esc(d);
+          };
         }
-        return col;
+        cols.push(col);
+      });
+      return cols;
+    }
+
+    function buildFilters() {
+      const parts = [];
+      state.cats.forEach((c) => {
+        const opts = c.values.map((v) =>
+          `<option value="${esc(v.value)}">${esc(v.label)} (${fmt.format(v.count)})</option>`).join("");
+        parts.push(`<label class="flex items-center gap-1 text-sm">
+          <span class="text-slate-500 dark:text-slate-400">${esc(c.title)}</span>
+          <select class="field cat-filter" data-col="${c.idx}"><option value="">전체</option>${opts}</select></label>`);
+      });
+      if (state.numCols.length) {
+        const opts = state.numCols.map((i) =>
+          `<option value="${i}"${i === state.primaryNum ? " selected" : ""}>${esc(state.columns[i])}</option>`).join("");
+        parts.push(`<div class="flex items-center gap-1 text-sm">
+          <select id="numCol" class="field">${opts}</select>
+          <input id="numMin" type="number" class="field w-24" placeholder="최소">
+          <span>~</span>
+          <input id="numMax" type="number" class="field w-24" placeholder="최대"></div>`);
+      }
+      parts.push(`<label class="flex items-center gap-1 text-sm cursor-pointer"><input id="favOnly" type="checkbox"> ★만 보기</label>`);
+      parts.push(`<button id="btnReset" class="btn" type="button">필터 초기화</button>`);
+      $id("filters").innerHTML = parts.join("");
+    }
+
+    function buildColChooser() {
+      $id("colPanel").innerHTML = state.columns.map((c, i) =>
+        `<label class="flex items-center gap-2 py-1 text-sm cursor-pointer">
+           <input type="checkbox" class="col-toggle" data-i="${i}"${state.hiddenCols[c] === false ? "" : " checked"}> ${esc(c)}</label>`).join("");
+    }
+
+    function readFilters() {
+      const f = { cats: {}, numCol: -1, min: null, max: null, favOnly: false };
+      document.querySelectorAll(".cat-filter").forEach((s) => { f.cats[s.dataset.col] = s.value; });
+      const nc = $id("numCol");
+      if (nc) {
+        f.numCol = Number(nc.value);
+        const mn = $id("numMin").value, mx = $id("numMax").value;
+        f.min = mn === "" ? null : Number(mn);
+        f.max = mx === "" ? null : Number(mx);
+      }
+      const fo = $id("favOnly");
+      f.favOnly = !!(fo && fo.checked);
+      state.filter = f;
+    }
+
+    function registerSearchExt() {
+      if (state.extRegistered) return;
+      state.extRegistered = true;
+      $.fn.dataTable.ext.search.push(function (settings, data, dataIndex, rowData) {
+        if (settings.nTable.id !== "table") return true;
+        const f = state.filter;
+        for (const col in f.cats) {
+          const sel = f.cats[col];
+          if (!sel) continue;
+          const v = rowData[col];
+          if ((isEmpty(v) ? "__blank__" : String(v)) !== sel) return false;
+        }
+        if (f.numCol >= 0 && (f.min !== null || f.max !== null)) {
+          const raw = rowData[f.numCol], n = Number(raw);
+          if (isEmpty(raw) || !isFinite(n)) return false;
+          if (f.min !== null && n < f.min) return false;
+          if (f.max !== null && n > f.max) return false;
+        }
+        if (f.favOnly && !state.favs.has(rowKey(rowData))) return false;
+        return true;
       });
     }
 
-    function renderStats({ columns, rows }) {
-      const cards = [statCard("전체", fmt.format(rows.length))];
-      const tier = columns.indexOf("등급");
-      if (tier >= 0) {
-        const count = (name) => rows.filter((r) => r[tier] === name).length;
-        cards.push(statCard("챌린저", fmt.format(count("챌린저"))));
-        cards.push(statCard("프로", fmt.format(count("프로"))));
-      }
-      const fol = columns.indexOf("팔로워 수");
-      if (fol >= 0) {
-        const max = rows.reduce((m, r) => Math.max(m, Number(r[fol]) || 0), 0);
-        cards.push(statCard("최대 팔로워", fmt.format(max)));
-      }
-      document.getElementById("stats").innerHTML = cards.join("");
+    // ------------------------------------------------------------ 통계 / 차트
+    const filteredRows = () => state.table.rows({ search: "applied" }).data().toArray();
+
+    function statCard(label, value) {
+      return `<div class="card p-4"><div class="text-xs text-slate-500 dark:text-slate-400">${esc(label)}</div>
+        <div class="mt-1 text-xl sm:text-2xl font-bold">${esc(value)}</div></div>`;
     }
 
+    function updateStats(rows) {
+      const cards = [statCard("전체", fmt.format(state.rows.length)), statCard("표시 중", fmt.format(rows.length))];
+      const pn = state.primaryNum;
+      if (pn >= 0) {
+        const vals = rows.map((r) => r[pn]).filter((v) => !isEmpty(v) && isFinite(Number(v))).map(Number).sort((a, b) => a - b);
+        const name = state.columns[pn];
+        if (vals.length) {
+          const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+          const mid = vals.length % 2 ? vals[(vals.length - 1) / 2] : (vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2;
+          cards.push(statCard(name + " 평균", fmt.format(Math.round(avg))));
+          cards.push(statCard(name + " 중앙값", fmt.format(Math.round(mid))));
+          cards.push(statCard(name + " 최대", fmt.format(vals[vals.length - 1])));
+        } else {
+          ["평균", "중앙값", "최대"].forEach((t) => cards.push(statCard(name + " " + t, "-")));
+        }
+      }
+      cards.push(statCard("즐겨찾기", fmt.format(state.favs.size)));
+      $id("stats").innerHTML = cards.join("");
+    }
+
+    function updateCharts(rows) {
+      if (typeof Chart === "undefined") return;
+      rows = rows || filteredRows();
+      const dark = document.documentElement.classList.contains("dark");
+      const text = dark ? "#cbd5e1" : "#475569", grid = dark ? "#334155" : "#e2e8f0";
+      let anyChart = false;
+
+      const pn = state.primaryNum;
+      if (pn >= 0) {
+        anyChart = true;
+        $id("barCard").style.display = "";
+        const top = rows.filter((r) => !isEmpty(r[pn]) && isFinite(Number(r[pn])))
+          .sort((a, b) => Number(b[pn]) - Number(a[pn])).slice(0, 10);
+        $id("barTitle").textContent = `${state.columns[pn]} 상위 ${top.length}`;
+        if (!state.charts.bar) {
+          state.charts.bar = new Chart($id("barChart"), {
+            type: "bar",
+            data: { labels: [], datasets: [{ data: [], backgroundColor: "#10b981", borderRadius: 4 }] },
+            options: {
+              indexAxis: "y", maintainAspectRatio: false, plugins: { legend: { display: false } },
+              scales: { x: { ticks: {}, grid: {} }, y: { ticks: {}, grid: { display: false } } },
+            },
+          });
+        }
+        const c = state.charts.bar;
+        c.data.labels = top.map((r) => { const s = String(r[0] ?? ""); return s.length > 14 ? s.slice(0, 13) + "…" : s; });
+        c.data.datasets[0].data = top.map((r) => Number(r[pn]));
+        c.options.scales.x.ticks.color = text; c.options.scales.x.grid.color = grid;
+        c.options.scales.y.ticks.color = text;
+        c.update("none");
+      }
+
+      const pc = state.primaryCat;
+      if (pc >= 0) {
+        anyChart = true;
+        $id("pieCard").style.display = "";
+        $id("pieTitle").textContent = `${state.columns[pc]} 분포`;
+        const counts = new Map();
+        rows.forEach((r) => {
+          const k = isEmpty(r[pc]) ? "(빈값)" : String(r[pc]);
+          counts.set(k, (counts.get(k) || 0) + 1);
+        });
+        const entries = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+        if (!state.charts.pie) {
+          state.charts.pie = new Chart($id("pieChart"), {
+            type: "doughnut",
+            data: { labels: [], datasets: [{ data: [], backgroundColor: PALETTE, borderWidth: 0 }] },
+            options: { maintainAspectRatio: false, plugins: { legend: { position: "right", labels: {} } } },
+          });
+        }
+        const c = state.charts.pie;
+        c.data.labels = entries.map((e) => e[0]);
+        c.data.datasets[0].data = entries.map((e) => e[1]);
+        c.options.plugins.legend.labels.color = text;
+        c.update("none");
+      }
+      if (anyChart) $id("charts").style.display = "";
+    }
+
+    function scheduleRefresh() {
+      clearTimeout(state.timer);
+      state.timer = setTimeout(() => {
+        const rows = filteredRows();
+        updateStats(rows);
+        updateCharts(rows);
+      }, 120);
+    }
+
+    // ------------------------------------------------------------ CSV 내보내기
+    function exportCsv() {
+      const rows = state.table.rows({ search: "applied", order: "applied" }).data().toArray();
+      const q = (v) => {
+        if (isEmpty(v)) return "";
+        let s = String(v);
+        if (typeof v === "string" && /^[=+@]/.test(s)) s = "'" + s;  // 엑셀 수식 실행 방지
+        return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const lines = [state.columns.map(q).join(",")]
+        .concat(rows.map((r) => state.columns.map((_, i) => q(r[i])).join(",")));
+      const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      const d = new Date(), p = (n) => String(n).padStart(2, "0");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `data_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
+    // ------------------------------------------------------------ 즐겨찾기 / 상세 보기
+    function toggleFav(key) {
+      if (state.favs.has(key)) state.favs.delete(key); else state.favs.add(key);
+      store.set("favs:v1", [...state.favs]);
+      const on = state.favs.has(key);
+      document.querySelectorAll(".fav-btn").forEach((b) => {
+        if (b.dataset.key === key) { b.classList.toggle("on", on); b.textContent = on ? "★" : "☆"; }
+      });
+      if (state.modalKey === key) setModalFavLabel();
+      if (state.filter.favOnly) state.table.draw(false); else scheduleRefresh();
+    }
+
+    function setModalFavLabel() {
+      $id("modalFav").textContent = state.favs.has(state.modalKey) ? "★ 즐겨찾기 해제" : "☆ 즐겨찾기에 추가";
+    }
+
+    function openModal(row) {
+      $id("modalTitle").textContent = String(row[0] ?? "");
+      $id("modalBody").innerHTML = state.columns.map((c, i) => {
+        const v = row[i];
+        let val;
+        if (isEmpty(v)) val = '<span class="text-slate-400">-</span>';
+        else if (isUrl(v)) val = `<a href="${esc(v)}" target="_blank" rel="noopener" class="text-emerald-600 dark:text-emerald-400 hover:underline">${esc(v)}</a>`;
+        else if (state.kinds[i] === "number") val = esc(fmt.format(v));
+        else val = esc(v);
+        return `<div class="py-2 flex gap-3"><dt class="w-28 shrink-0 text-slate-500 dark:text-slate-400">${esc(c)}</dt><dd class="break-all">${val}</dd></div>`;
+      }).join("");
+      state.modalKey = rowKey(row);
+      setModalFavLabel();
+      $id("modal").style.display = "flex";
+    }
+    function closeModal() { $id("modal").style.display = "none"; state.modalKey = null; }
+
+    // ------------------------------------------------------------ 초기화
     function showError(message) {
-      const box = document.getElementById("error");
-      box.textContent = message;
+      const box = $id("error");
+      box.innerHTML = esc(message) + ' <button id="btnRetry" class="btn ml-2" type="button">다시 시도</button>';
       box.classList.remove("hidden");
-      document.getElementById("updated").textContent = "데이터를 불러오지 못했습니다.";
+      $id("updated").textContent = "데이터를 불러오지 못했습니다.";
+      $id("btnRetry").onclick = () => {
+        box.classList.add("hidden");
+        $id("updated").textContent = "불러오는 중...";
+        init();
+      };
+    }
+
+    function describeUpdated(payload, count) {
+      let text = "마지막 업데이트: " + payload.updated_at + "  ·  총 " + fmt.format(count) + "행";
+      const t = Date.parse(String(payload.updated_at || "").replace(" KST", "").replace(" ", "T") + "+09:00");
+      if (isFinite(t)) {
+        const hours = Math.floor((Date.now() - t) / 3600000);
+        if (hours < 1) text += "  ·  방금 전";
+        else if (hours < 48) text += `  ·  ${hours}시간 전`;
+        else text += `  ·  ${Math.floor(hours / 24)}일 전 ⚠️ 데이터가 오래되었습니다`;
+      }
+      return text;
+    }
+
+    function bindEvents() {
+      $id("btnTheme").onclick = toggleTheme;
+      $id("btnCsv").onclick = () => { if (state.table) exportCsv(); };
+
+      // 열 선택 패널
+      const panel = $id("colPanel");
+      $id("btnCols").onclick = (e) => { e.stopPropagation(); panel.style.display = panel.style.display === "none" ? "block" : "none"; };
+      panel.addEventListener("click", (e) => e.stopPropagation());
+      document.addEventListener("click", () => { panel.style.display = "none"; });
+      panel.addEventListener("change", (e) => {
+        if (!e.target.classList.contains("col-toggle") || !state.table) return;
+        const i = Number(e.target.dataset.i), title = state.columns[i];
+        state.table.column(i + 1).visible(e.target.checked);
+        if (e.target.checked) delete state.hiddenCols[title]; else state.hiddenCols[title] = false;
+        store.set("cols:v1", state.hiddenCols);
+        state.table.columns.adjust();
+      });
+
+      // 필터
+      let timer;
+      const apply = () => { if (!state.table) return; readFilters(); state.table.draw(); };
+      const filters = $id("filters");
+      filters.addEventListener("change", apply);
+      filters.addEventListener("input", (e) => {
+        if (e.target.type === "number") { clearTimeout(timer); timer = setTimeout(apply, 250); }
+      });
+      filters.addEventListener("click", (e) => {
+        if (e.target.id !== "btnReset" || !state.table) return;
+        document.querySelectorAll(".cat-filter").forEach((s) => { s.value = ""; });
+        ["numMin", "numMax"].forEach((id) => { const el = $id(id); if (el) el.value = ""; });
+        const fo = $id("favOnly"); if (fo) fo.checked = false;
+        const si = document.querySelector(".dt-search input"); if (si) si.value = "";
+        readFilters();
+        state.table.search("").draw();
+      });
+
+      // 상세 보기 / 단축키
+      $id("modalClose").onclick = closeModal;
+      $id("modal").addEventListener("click", (e) => { if (e.target === $id("modal")) closeModal(); });
+      $id("modalFav").onclick = () => { if (state.modalKey !== null) toggleFav(state.modalKey); };
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { closeModal(); panel.style.display = "none"; return; }
+        const tag = (e.target.tagName || "").toLowerCase();
+        if (e.key === "/" && tag !== "input" && tag !== "select" && tag !== "textarea") {
+          const si = document.querySelector(".dt-search input");
+          if (si) { e.preventDefault(); si.focus(); }
+        }
+      });
     }
 
     async function init() {
@@ -111,21 +527,24 @@
         showError(e.message);
         return;
       }
+      if (!Array.isArray(payload.columns) || !Array.isArray(payload.rows)) {
+        showError("data.json 형식이 올바르지 않습니다.");
+        return;
+      }
 
-      const { columns, rows } = payload;
-      document.getElementById("updated").textContent =
-        "마지막 업데이트: " + payload.updated_at + "  ·  총 " + fmt.format(rows.length) + "행";
-      renderStats(payload);
+      $id("updated").textContent = describeUpdated(payload, payload.rows.length);
+      analyze(payload.columns, payload.rows);
+      buildFilters();
+      buildColChooser();
+      readFilters();
+      registerSearchExt();
 
-      const tier = columns.indexOf("등급");
-      const fol = columns.indexOf("팔로워 수");
-
-      const table = $("#table").DataTable({
-        data: rows,
-        columns: buildColumns(columns, rows),
+      state.table = $("#table").DataTable({
+        data: state.rows,
+        columns: buildColumns(),
         pageLength: 25,
         lengthMenu: [10, 25, 50, 100],
-        order: fol >= 0 ? [[fol, "desc"]] : [],
+        order: state.primaryNum >= 0 ? [[state.primaryNum + 1, "desc"]] : [],
         scrollX: true,
         autoWidth: false,
         deferRender: true,
@@ -139,21 +558,23 @@
           emptyTable: "데이터가 없습니다.",
         },
       });
+      state.table.on("draw", scheduleRefresh);
 
-      // '등급' 열이 있으면 필터 드롭다운 표시
-      if (tier >= 0) {
-        document.getElementById("filters").innerHTML =
-          `<label class="text-sm text-slate-600 mr-2" for="tierFilter">등급</label>
-           <select id="tierFilter" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
-             <option value="">전체</option><option>챌린저</option><option>프로</option>
-           </select>`;
-        document.getElementById("tierFilter").addEventListener("change", (e) => {
-          const v = e.target.value;
-          table.column(tier).search(v ? "^" + v + "$" : "", true, false).draw();
-        });
-      }
+      $("#table tbody").on("click", ".fav-btn", function (e) {
+        e.stopPropagation();
+        toggleFav(this.dataset.key);
+      });
+      $("#table tbody").on("click", "tr", function (e) {
+        if (e.target.closest("a,button,input,label")) return;
+        const row = state.table.row(this).data();
+        if (row) openModal(row);
+      });
+
+      scheduleRefresh();
     }
 
+    setThemeLabel();
+    bindEvents();
     init();
   </script>
 </body>
