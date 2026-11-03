@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>데이터 대시보드</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.min.css">
+  <style>
+    @media (max-width: 640px) {
+      .dt-container .dt-layout-row { flex-direction: column; align-items: stretch; gap: .5rem; }
+    }
+    table.dataTable thead th { white-space: nowrap; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+  <main class="max-w-6xl mx-auto px-4 py-6 sm:py-10">
+    <header class="mb-6">
+      <h1 class="text-2xl sm:text-3xl font-bold">데이터 대시보드</h1>
+      <p id="updated" class="text-sm text-slate-500 mt-1">불러오는 중...</p>
+    </header>
+
+    <section id="stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6"></section>
+
+    <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 sm:p-5">
+      <div id="filters" class="mb-3"></div>
+      <div id="error" class="hidden rounded-xl bg-red-50 text-red-700 border border-red-200 p-4 text-sm"></div>
+      <table id="table" class="display nowrap" style="width:100%"></table>
+    </section>
+
+    <footer class="mt-6 text-center text-xs text-slate-400">매일 자동으로 갱신됩니다.</footer>
+  </main>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/2.1.8/js/dataTables.min.js"></script>
+  <script>
+    const fmt = new Intl.NumberFormat("ko-KR");
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const isEmpty = (v) => v === null || v === undefined || v === "";
+
+    function statCard(label, value) {
+      return `<div class="rounded-2xl bg-white border border-slate-200 shadow-sm p-4">
+        <div class="text-xs text-slate-500">${esc(label)}</div>
+        <div class="mt-1 text-2xl font-bold">${esc(value)}</div></div>`;
+    }
+
+    // 열 종류 판별: 전부 숫자면 number, 전부 http 링크면 url, 그 외 text
+    function columnKind(rows, i) {
+      let allNumber = true, allUrl = true, seen = false;
+      for (const r of rows) {
+        const v = r[i];
+        if (isEmpty(v)) continue;
+        seen = true;
+        if (typeof v !== "number") allNumber = false;
+        if (typeof v !== "string" || !/^https?:\/\//.test(v)) allUrl = false;
+        if (!allNumber && !allUrl) break;
+      }
+      if (!seen) return "text";
+      return allNumber ? "number" : allUrl ? "url" : "text";
+    }
+
+    function buildColumns(columns, rows) {
+      return columns.map((title, i) => {
+        const kind = columnKind(rows, i);
+        const col = { title, data: i, defaultContent: "" };
+        if (kind === "number") {
+          col.className = "dt-right";
+          col.render = (d, t) => (t === "display" && !isEmpty(d) ? fmt.format(d) : d);
+        } else if (kind === "url") {
+          col.render = (d, t) => (t === "display" && !isEmpty(d)
+            ? `<a href="${esc(d)}" target="_blank" rel="noopener" class="text-emerald-600 hover:underline">바로가기</a>`
+            : d);
+        } else {
+          col.render = (d, t) => (t === "display" && !isEmpty(d) ? esc(d) : d);
+        }
+        return col;
+      });
+    }
+
+    function renderStats({ columns, rows }) {
+      const cards = [statCard("전체", fmt.format(rows.length))];
+      const tier = columns.indexOf("등급");
+      if (tier >= 0) {
+        const count = (name) => rows.filter((r) => r[tier] === name).length;
+        cards.push(statCard("챌린저", fmt.format(count("챌린저"))));
+        cards.push(statCard("프로", fmt.format(count("프로"))));
+      }
+      const fol = columns.indexOf("팔로워 수");
+      if (fol >= 0) {
+        const max = rows.reduce((m, r) => Math.max(m, Number(r[fol]) || 0), 0);
+        cards.push(statCard("최대 팔로워", fmt.format(max)));
+      }
+      document.getElementById("stats").innerHTML = cards.join("");
+    }
+
+    function showError(message) {
+      const box = document.getElementById("error");
+      box.textContent = message;
+      box.classList.remove("hidden");
+      document.getElementById("updated").textContent = "데이터를 불러오지 못했습니다.";
+    }
+
+    async function init() {
+      let payload;
+      try {
+        const res = await fetch("data.json?ts=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) throw new Error("data.json 을 불러오지 못했습니다 (HTTP " + res.status + ")");
+        payload = await res.json();
+      } catch (e) {
+        showError(e.message);
+        return;
+      }
+
+      const { columns, rows } = payload;
+      document.getElementById("updated").textContent =
+        "마지막 업데이트: " + payload.updated_at + "  ·  총 " + fmt.format(rows.length) + "행";
+      renderStats(payload);
+
+      const tier = columns.indexOf("등급");
+      const fol = columns.indexOf("팔로워 수");
+
+      const table = $("#table").DataTable({
+        data: rows,
+        columns: buildColumns(columns, rows),
+        pageLength: 25,
+        lengthMenu: [10, 25, 50, 100],
+        order: fol >= 0 ? [[fol, "desc"]] : [],
+        scrollX: true,
+        autoWidth: false,
+        deferRender: true,
+        language: {
+          search: "검색:",
+          lengthMenu: "_MENU_ 개씩 보기",
+          info: "총 _TOTAL_개 중 _START_–_END_",
+          infoEmpty: "데이터가 없습니다.",
+          infoFiltered: "(전체 _MAX_개에서 필터링)",
+          zeroRecords: "검색 결과가 없습니다.",
+          emptyTable: "데이터가 없습니다.",
+        },
+      });
+
+      // '등급' 열이 있으면 필터 드롭다운 표시
+      if (tier >= 0) {
+        document.getElementById("filters").innerHTML =
+          `<label class="text-sm text-slate-600 mr-2" for="tierFilter">등급</label>
+           <select id="tierFilter" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
+             <option value="">전체</option><option>챌린저</option><option>프로</option>
+           </select>`;
+        document.getElementById("tierFilter").addEventListener("change", (e) => {
+          const v = e.target.value;
+          table.column(tier).search(v ? "^" + v + "$" : "", true, false).draw();
+        });
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
